@@ -1,6 +1,7 @@
 python-telegram-bot
 python-dotenv
 requests
+jdatetime
 langgraph
 langchain-openai
 langchain-core

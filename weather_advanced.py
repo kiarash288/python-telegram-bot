@@ -3,8 +3,7 @@ import requests
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-from datetime import datetime, timezone
-from collections import defaultdict
+from datetime import datetime
 from date import parse_forecast_args
 
     
@@ -12,9 +11,63 @@ load_dotenv()
 
 
 TOKEN = os.getenv("API_TELEGRAM")
-API_KEY = os.getenv("API_WEATHER")
-BASE_URL_current_weather = os.getenv("BASE_URL_current_weather")
-BASE_URL_forecast_weather = os.getenv("BASE_URL_forecast_weather")
+API_KEY = os.getenv("NEW_API_WEATHER") or os.getenv("API_WEATHER")
+BASE_URL_current_weather = os.getenv("NEW_BASE_URL_current_weather") or os.getenv("BASE_URL_current_weather")
+BASE_URL_forecast_weather = os.getenv("NEW_BASE_URL_forecast_weather") or os.getenv("BASE_URL_forecast_weather")
+
+
+def _normalize_base_url(base_url: str, kind: str) -> str:
+    if not base_url:
+        if kind == "current":
+            return "https://api.weatherapi.com/v1/current.json"
+        return "https://api.weatherapi.com/v1/forecast.json"
+    if "weatherapi.com/docs" in base_url:
+        if kind == "current":
+            return "https://api.weatherapi.com/v1/current.json"
+        return "https://api.weatherapi.com/v1/forecast.json"
+    return base_url
+
+
+_CITY_ALIASES = {
+    "تهران": "Tehran",
+    "مشهد": "Mashhad",
+    "اصفهان": "Isfahan",
+    "شیراز": "Shiraz",
+    "تبریز": "Tabriz",
+    "اهواز": "Ahvaz",
+    "کرج": "Karaj",
+    "قم": "Qom",
+    "کرمانشاه": "Kermanshah",
+    "ارومیه": "Urmia",
+    "رشت": "Rasht",
+    "زاهدان": "Zahedan",
+    "یزد": "Yazd",
+    "کرمان": "Kerman",
+    "همدان": "Hamedan",
+    "قزوین": "Qazvin",
+    "سنندج": "Sanandaj",
+    "بندرعباس": "Bandar Abbas",
+    "بندر عباس": "Bandar Abbas",
+    "کازرون": "Kazerun",
+    "ساری": "Sari",
+    "گرگان": "Gorgan",
+    "بوشهر": "Bushehr",
+    "خرم آباد": "Khorramabad",
+    "خرم‌آباد": "Khorramabad",
+    "کیش": "Kish",
+    "قشم": "Qeshm",
+    "مازندران": "Mazandaran",
+    "گیلان": "Gilan",
+    "کاشان": "Kashan",
+    "اراک": "Arak",
+}
+
+
+def _normalize_city_name(city: str) -> str:
+    if not city:
+        return city
+    cleaned = city.strip()
+    return _CITY_ALIASES.get(cleaned, cleaned)
 
 
 
@@ -22,33 +75,46 @@ BASE_URL_forecast_weather = os.getenv("BASE_URL_forecast_weather")
 async def get_current_weather(city: str):
     try:
         
-        base_url = BASE_URL_current_weather
-        complete_url = f'{base_url}?q={city}&appid={API_KEY}&units=metric&lang=fa'
+        base_url = _normalize_base_url(BASE_URL_current_weather, "current")
+        normalized_city = _normalize_city_name(city)
+        complete_url = f"{base_url}?key={API_KEY}&q={normalized_city}&aqi=no&lang=fa"
         response = requests.get(complete_url)
         response.raise_for_status()
         data = response.json()
-        if data['cod'] != '404':
-            main= data['main']
-            weather = data['weather'][0]
-            temp = main['temp']
-            humidity = main['humidity']
-            wind_speed = data['wind']['speed']
-            pressure = main['pressure']
-            fells_like = main['feels_like']
-            uv_index = data.get('uvi', 'نامشخص')
-            description = weather['description']
-            city = data['name']            # روش اول: استفاده از \n دستی (تمیزترین روش برای تلگرام)
-            return (
-                f"🌤 وضعیت آب و هوای {city}:\n"
-                f"📝 توضیحات: {description}\n"
-                f"🌡 دما: {temp}°C\n"
-                f"💧 رطوبت: {humidity}%\n"
-                f"🌬 فشار: {pressure} hPa\n"
-                f"🌡 حساسیت آب و هوا: {fells_like}°C\n"
-                f"🌬 سرعت باد: {wind_speed} m/s\n"
-                f"🌡 میزان uv: {uv_index}\n"
-                
-            )
+        if "error" in data:
+            return data["error"].get("message", "هیچ داده ای برای این شهر یافت نشد")
+        location = data["location"]
+        current = data["current"]
+        condition = current["condition"]["text"]
+        temp = current["temp_c"]
+        humidity = current["humidity"]
+        wind_speed = current["wind_kph"]
+        pressure = current["pressure_mb"]
+        fells_like = current["feelslike_c"]
+        uv_index = current.get("uv", "نامشخص")
+        cloud = current.get("cloud", "نامشخص")
+        visibility = current.get("vis_km", "نامشخص")
+        precip = current.get("precip_mm", "نامشخص")
+        gust = current.get("gust_kph", "نامشخص")
+        last_updated = current.get("last_updated", "نامشخص")
+        city = location["name"]
+        return (
+            f"🌤 وضعیت آب و هوای {city}:\n"
+            f"📝 توضیحات: {condition}\n"
+            f"🌡 دما: {temp}°C\n"
+            f"💧 رطوبت: {humidity}%\n"
+            f"🌬 فشار: {pressure} mb\n"
+            f"🌡 حساسیت آب و هوا: {fells_like}°C\n"
+            f"🌬 سرعت باد: {wind_speed} km/h\n"
+            f"🌪 تندباد: {gust} km/h\n"
+            f"☁️ پوشش ابر: {cloud}%\n"
+            f"👁 دید افقی: {visibility} km\n"
+            f"🌧 بارش: {precip} mm\n"
+            f"🔆 شاخص UV: {uv_index}\n"
+            f"🌅 طلوع: {last_updated}\n"
+            f"🌇 غروب: {last_updated}\n"
+            
+        )
 
     except Exception as e:
         print(f"Error: {e}")
@@ -59,40 +125,37 @@ async def get_current_weather(city: str):
 
 async def get_forecast_weather(city: str, target_date: datetime):
     try:
-        base_url = BASE_URL_forecast_weather
-        complete_url = f'{base_url}?q={city}&appid={API_KEY}&units=metric&lang=fa'
+        base_url = _normalize_base_url(BASE_URL_forecast_weather, "forecast")
+        normalized_city = _normalize_city_name(city)
+        complete_url = f"{base_url}?key={API_KEY}&q={normalized_city}&days=10&aqi=no&alerts=no&lang=fa"
         response = requests.get(complete_url)
         response.raise_for_status()
         data = response.json()
-        if data.get('cod') == '404':
-            return "  دوباره تلاش کنید هیچ داده ای برای این شهر یافت نشد" 
-        items = data.get("list", [])
-        if not items:
+        if "error" in data:
+            return data["error"].get("message", "هیچ داده ای برای این شهر یافت نشد")
+        forecast_days = data.get("forecast", {}).get("forecastday", [])
+        if not forecast_days:
             return "هیچ داده ای برای این شهر یافت نشد"
         target_str = target_date.strftime("%Y-%m-%d")
-        day_items = [item for item in items if item.get("dt_txt", "").startswith(target_str)]
-        if not day_items:
+        day_data = next((item for item in forecast_days if item.get("date") == target_str), None)
+        if not day_data:
             return "برای این تاریخ پیش بینی در دسترس نیست (فقط چند روز آینده)."
-        temps = [item["main"]["temp"] for item in day_items]
-        hums = [item["main"]["humidity"] for item in day_items]
-        winds = [item["wind"]["speed"] for item in day_items]
-        pressures = [item["main"]["pressure"] for item in day_items]
-        best_item = min(
-            day_items,
-            key=lambda item: abs(
-                datetime.fromtimestamp(item["dt"], tz=timezone.utc).hour - 12
-            ),
-        )
-        description = best_item["weather"][0]["description"]
-        city_name = data["city"]["name"]
+        day = day_data["day"]
+        astro = day_data.get("astro", {})
+        description = day["condition"]["text"]
+        city_name = data.get("location", {}).get("name", city)
         return (
-            f"🌤 پیش بینی آب و هوای {city_name} برای {target_str}:\n\n"
-            f"📝 توضیحات غالب: {description}"
-            f"🌡 حداقل/حداکثر دما: {min(temps)}°C / {max(temps)}°C\n"
-            f"💧 رطوبت میانگین: {sum(hums) // len(hums)}%\n"
-            f"🌬 سرعت باد میانگین: {sum(winds) / len(winds):.1f} m/s\n"
-            f"🌬 فشار میانگین: {sum(pressures) // len(pressures)} hPa\n"
-            
+            f"🌤 پیش بینی آب و هوای {city_name} برای {target_str}:\n"
+            f"📝 توضیحات غالب: {description}\n"
+            f"🌡 حداقل/حداکثر دما: {day['mintemp_c']}°C / {day['maxtemp_c']}°C\n"
+            f"🌡 دمای میانگین: {day['avgtemp_c']}°C\n"
+            f"💧 رطوبت میانگین: {day['avghumidity']}%\n"
+            f"🌬 بیشترین سرعت باد: {day['maxwind_kph']} km/h\n"
+            f"🌧 احتمال بارش: {day.get('daily_chance_of_rain', 'نامشخص')}%\n"
+            f"🌧 مجموع بارش: {day.get('totalprecip_mm', 'نامشخص')} mm\n"
+            f"👁 دید افقی میانگین: {day.get('avgvis_km', 'نامشخص')} km\n"
+            f"🔆 شاخص UV: {day.get('uv', 'نامشخص')}\n"
+            f"🌅 طلوع: {astro.get('sunrise', 'نامشخص')} | 🌇 غروب: {astro.get('sunset', 'نامشخص')}\n"
         )
 
     except Exception as e:

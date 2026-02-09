@@ -6,7 +6,15 @@ import os
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters, CallbackQueryHandler
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 load_dotenv()
-from weather_advanced import weather_command, forecast_command
+from weather_advanced import (
+    weather_command,
+    forecast_command,
+    get_current_weather,
+    get_forecast_weather,
+)
+from date import parse_forecast_args
+from datetime import datetime, timedelta
+import jdatetime
 from bot_ai import handle_message
 from main_ai import AIAgent
 from gold import get_gold_price, get_currency_price, get_crypto_price
@@ -86,11 +94,69 @@ button = [
     [InlineKeyboardButton("⬅️بازگشت", callback_data="back")]
 ]
 
+weather_inline_button = [
+    [InlineKeyboardButton("🌤 وضعیت فعلی", callback_data="weather_current"),
+     InlineKeyboardButton("📅 پیش بینی", callback_data="weather_forecast")],
+    [InlineKeyboardButton("⬅️بازگشت", callback_data="back")],
+]
+
+_CITY_CHOICES = [
+    "تهران", "مشهد", "اصفهان", "شیراز", "تبریز", "اهواز",
+    "کرج", "قم", "کرمانشاه", "ارومیه", "رشت", "یزد",
+    "کازرون", "قشم", "کیش", "مازندران", "گیلان", "بندر عباس",
+]
+
+
+def _build_city_keyboard(prefix: str) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for i in range(0, len(_CITY_CHOICES), 3):
+        row = [
+            InlineKeyboardButton(city, callback_data=f"{prefix}:{city}")
+            for city in _CITY_CHOICES[i:i + 3]
+        ]
+        rows.append(row)
+    rows.append([InlineKeyboardButton("⬅️بازگشت", callback_data="back")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _to_persian_digits(text: str) -> str:
+    return text.translate(str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹"))
+
+
+def _build_forecast_dates_keyboard() -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    today = datetime.now().date()
+    row: list[InlineKeyboardButton] = []
+    for offset in range(1, 5):
+        target_date = today + timedelta(days=offset)
+        iso_label = target_date.strftime("%Y-%m-%d")
+        jdate = jdatetime.date.fromgregorian(date=target_date)
+        month_names = [
+            "فروردین", "اردیبهشت", "خرداد", "تیر",
+            "مرداد", "شهریور", "مهر", "آبان",
+            "آذر", "دی", "بهمن", "اسفند",
+        ]
+        day_label = _to_persian_digits(str(jdate.day))
+        label = f"{day_label} {month_names[jdate.month - 1]}"
+        row.append(InlineKeyboardButton(label, callback_data=f"weather_date:{iso_label}"))
+    rows.append(row)
+    rows.append([InlineKeyboardButton("⬅️بازگشت", callback_data="back")])
+    return InlineKeyboardMarkup(rows)
+
 reply_button = ReplyKeyboardMarkup(
     [
         ["🌤️آب و هوا", "🪙قیمت طلا"],
         ["💵قیمت ارز", "💎ارز دیجیتال"],
         ["🤖هوش مصنوعی", "👨‍💻 ارتباط با سازنده"],
+        ["⬅️بازگشت"],
+    ],
+    resize_keyboard=True,
+    is_persistent=True,
+)
+
+weather_reply_button = ReplyKeyboardMarkup(
+    [
+        ["🌤 وضعیت فعلی", "📅 پیش بینی"],
         ["⬅️بازگشت"],
     ],
     resize_keyboard=True,
@@ -132,14 +198,14 @@ async def tutorial_weather(update: Update, context: ContextTypes.DEFAULT_TYPE):
 فقط کافیه طبق الگوهای زیر بنویسی:
 
 1️⃣ آب و هوای الان:
-«وضعیت» + اسم شهر
-مثال:  /weather شیراز
+دکمه «وضعیت فعلی» رو بزن و بعد اسم شهر رو بفرست.
+مثال:  Shiraz یا شیراز
 
 2️⃣ پیش‌بینی روزهای آینده:
-«پیشبینی» + اسم شهر + تاریخ
-مثال:  /forecast شیراز ۲۰ بهمن
+دکمه «پیش بینی» رو بزن و بعد اسم شهر + تاریخ رو بفرست.
+مثال:  Shiraz 20 Bahman یا شیراز ۲۰ بهمن
 
-⚠️ نکته: لطفاً نام شهر و تاریخ رو دقیق وارد کن.""")
+⚠️ نکته: نام شهر رو می‌تونی فارسی یا انگلیسی بنویسی.""")
 
 async def tutorial_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.effective_message
@@ -173,7 +239,7 @@ async def contact_developer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💡 اگه ایده‌ای داری، خوشحال میشم بشنوم\n"
         f"\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"👤 ارتباط با سازنده: {MY_ID}"
+        f"👨‍💻 ارتباط با سازنده: {MY_ID}"
     )
 
 async def welcome_new_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -205,6 +271,7 @@ def _is_addressed_in_group(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 _MENU_BUTTONS = {
     "🌤️آب و هوا", "🤖هوش مصنوعی", "🪙قیمت طلا",
     "💵قیمت ارز", "💎ارز دیجیتال", "👨‍💻 ارتباط با سازنده", "⬅️بازگشت",
+    "🌤 وضعیت فعلی", "📅 پیش بینی",
 }
 
 
@@ -222,8 +289,28 @@ async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ── دکمه‌های منو همیشه کار کنن (بدون بررسی اسپم) ──
     if text == "🌤️آب و هوا":
-        context.user_data["mode"] = None
-        await tutorial_weather(update, context)
+        context.user_data["mode"] = "weather_menu"
+        await message.reply_text(
+            "یکی از گزینه‌های هواشناسی رو انتخاب کن 👇",
+            reply_markup=InlineKeyboardMarkup(weather_inline_button),
+        )
+        await message.reply_text("منوی هواشناسی 👇", reply_markup=weather_reply_button)
+        return
+    if text == "🌤 وضعیت فعلی":
+        context.user_data["mode"] = "weather_current"
+        await message.reply_text(
+            "یکی از شهرهای زیر رو انتخاب کن 👇\n"
+            "اگر تو لیست نبود، اسم شهر رو انگلیسی بنویس.",
+            reply_markup=_build_city_keyboard("weather_city_current"),
+        )
+        return
+    if text == "📅 پیش بینی":
+        context.user_data["mode"] = "weather_forecast"
+        await message.reply_text(
+            "یکی از شهرهای زیر رو انتخاب کن 👇\n"
+            "اگر تو لیست نبود، اسم شهر رو انگلیسی بنویس.",
+            reply_markup=_build_city_keyboard("weather_city_forecast"),
+        )
         return
     if text == "🤖هوش مصنوعی":
         context.user_data["mode"] = "ai"
@@ -254,8 +341,36 @@ async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await check_spam(update):
         return
 
-    # ── اگه مود AI فعاله → بفرست به هوش مصنوعی ──
+    # ── هندل وضعیت آب و هوا ──
     mode = context.user_data.get("mode")
+    if mode == "weather_current":
+        city = text.strip()
+        if not city:
+            await message.reply_text("لطفاً اسم شهر رو بنویس.")
+            return
+        weather_info = await get_current_weather(city)
+        if weather_info:
+            await message.reply_text(weather_info)
+        else:
+            await message.reply_text("هیچ داده ای برای این شهر یافت نشد")
+        return
+    if mode == "weather_forecast":
+        city, target_date = parse_forecast_args(text.split())
+        if not city or not target_date:
+            context.user_data["forecast_city"] = text.strip()
+            await message.reply_text(
+                "تاریخ رو از دکمه‌های زیر انتخاب کن 👇",
+                reply_markup=_build_forecast_dates_keyboard(),
+            )
+            return
+        forecast_info = await get_forecast_weather(city, target_date)
+        if forecast_info:
+            await message.reply_text(forecast_info)
+        else:
+            await message.reply_text("هیچ داده ای برای این تاریخ یافت نشد")
+        return
+
+    # ── اگه مود AI فعاله → بفرست به هوش مصنوعی ──
     if mode == "ai":
         await handle_message(update, context)
         return
@@ -267,8 +382,59 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     data = query.data
     if data == "weather":
-        context.user_data["mode"] = None
-        await tutorial_weather(update, context)
+        context.user_data["mode"] = "weather_menu"
+        if query.message:
+            await query.message.reply_text(
+                "یکی از گزینه‌های هواشناسی رو انتخاب کن 👇",
+                reply_markup=InlineKeyboardMarkup(weather_inline_button),
+            )
+            await query.message.reply_text("منوی هواشناسی 👇", reply_markup=weather_reply_button)
+    elif data == "weather_current":
+        context.user_data["mode"] = "weather_current"
+        if query.message:
+            await query.message.reply_text(
+                "یکی از شهرهای زیر رو انتخاب کن 👇\n"
+                "اگر تو لیست نبود، اسم شهر رو انگلیسی بنویس.",
+                reply_markup=_build_city_keyboard("weather_city_current"),
+            )
+    elif data == "weather_forecast":
+        context.user_data["mode"] = "weather_forecast"
+        if query.message:
+            await query.message.reply_text(
+                "یکی از شهرهای زیر رو انتخاب کن 👇\n"
+                "اگر تو لیست نبود، اسم شهر رو انگلیسی بنویس.",
+                reply_markup=_build_city_keyboard("weather_city_forecast"),
+            )
+    elif data.startswith("weather_city_current:"):
+        city = data.split(":", 1)[1]
+        weather_info = await get_current_weather(city)
+        if query.message:
+            if weather_info:
+                await query.message.reply_text(weather_info)
+            else:
+                await query.message.reply_text("هیچ داده ای برای این شهر یافت نشد")
+    elif data.startswith("weather_city_forecast:"):
+        city = data.split(":", 1)[1]
+        context.user_data["forecast_city"] = city
+        if query.message:
+            await query.message.reply_text(
+                "تاریخ رو از دکمه‌های زیر انتخاب کن 👇",
+                reply_markup=_build_forecast_dates_keyboard(),
+            )
+    elif data.startswith("weather_date:"):
+        date_str = data.split(":", 1)[1]
+        city = context.user_data.get("forecast_city")
+        if not city:
+            if query.message:
+                await query.message.reply_text("اول اسم شهر رو انتخاب کن.")
+            return
+        target_date = datetime.strptime(date_str, "%Y-%m-%d")
+        forecast_info = await get_forecast_weather(city, target_date)
+        if query.message:
+            if forecast_info:
+                await query.message.reply_text(forecast_info)
+            else:
+                await query.message.reply_text("هیچ داده ای برای این تاریخ یافت نشد")
     elif data == "ai":
         context.user_data["mode"] = "ai"
         await tutorial_ai(update, context)

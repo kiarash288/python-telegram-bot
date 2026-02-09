@@ -39,8 +39,8 @@ async def get_current_weather(city: str):
             description = weather['description']
             city = data['name']            # روش اول: استفاده از \n دستی (تمیزترین روش برای تلگرام)
             return (
-                f"🌤 وضعیت آب و هوای {city}:\n\n"
-                f"📝 توضیحات: {description}"
+                f"🌤 وضعیت آب و هوای {city}:\n"
+                f"📝 توضیحات: {description}\n"
                 f"🌡 دما: {temp}°C\n"
                 f"💧 رطوبت: {humidity}%\n"
                 f"🌬 فشار: {pressure} hPa\n"
